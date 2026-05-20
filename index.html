@@ -1,0 +1,420 @@
+<!doctype html>
+<html>
+    <head>
+        <title>CSV Viewer</title>
+        <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+        <script src="https://unpkg.com/ag-grid-community@31.2.1/dist/ag-grid-community.min.js"></script>
+        <link
+            rel="stylesheet"
+            href="https://unpkg.com/ag-grid-community@31.2.1/styles/ag-grid.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://unpkg.com/ag-grid-community@31.2.1/styles/ag-theme-alpine.css"
+        />
+    </head>
+
+    <body>
+        <h2>
+            CSV Viewer
+            <span
+                id="rowCount"
+                style="font-size: 0.6em; margin-left: 10px; color: #666"
+            >
+                (0 rows)
+            </span>
+        </h2>
+
+        <input type="file" id="fileInput" />
+        <button onclick="upload()">Load File</button>
+
+        <input
+            type="text"
+            id="viewName"
+            placeholder="New View"
+            style="width: 150px"
+        />
+        <button onclick="saveView()">Save View</button>
+        <div
+            id="columnPanel"
+            style="
+                display: none;
+                border: 1px solid #ccc;
+                padding: 10px;
+                margin-top: 10px;
+                max-height: 200px;
+                overflow: auto;
+            "
+        ></div>
+
+        <select id="viewSelector"></select>
+        <button onclick="loadView()">Load View</button>
+        <button onclick="deleteView()">Delete View</button>
+        <br /><br />
+        <input
+            type="text"
+            id="quickSearch"
+            placeholder="Search all columns..."
+            oninput="onQuickSearch()"
+            style="width: 300px"
+        />
+        <button onclick="toggleColumnPanel()">Columns</button>
+        <button onclick="resetLayout()">Reset Layout</button>
+        <button onclick="exportCSV()">Export Filtered</button>
+
+        <div
+            id="grid"
+            class="ag-theme-alpine"
+            style="height: 600px; margin-top: 10px"
+        ></div>
+
+        <script>
+            // =====================
+            // 1. GRID SETUP
+            // =====================
+            let totalRowCount = 0;
+            let currentFileKey = null;
+            let gridOptions = {
+                defaultColDef: {
+                    sortable: true,
+                    filter: true,
+                    resizable: true,
+                },
+                rowHeight: 28,
+                animateRows: true,
+
+                alwaysMultiSort: true,
+
+                onColumnMoved: () => saveLayout(currentFileKey),
+                onColumnResized: () => saveLayout(currentFileKey),
+
+                onSortChanged: () => {
+                    gridApi.refreshClientSideRowModel("sort");
+                    saveLayout(currentFileKey);
+                    updateRowCount();
+                },
+
+                onFilterChanged: () => {
+                    saveLayout(currentFileKey);
+                    updateRowCount();
+                },
+            };
+
+            const gridApi = agGrid.createGrid(
+                document.getElementById("grid"),
+                gridOptions,
+            );
+
+            // =====================
+            // 2. LAYOUT FUNCTIONS
+            // =====================
+            function toggleColumnPanel() {
+                const panel = document.getElementById("columnPanel");
+
+                if (panel.style.display === "none") {
+                    buildColumnPanel();
+                    panel.style.display = "block";
+                } else {
+                    panel.style.display = "none";
+                }
+            }
+
+            function buildColumnPanel() {
+                const panel = document.getElementById("columnPanel");
+                panel.innerHTML = "";
+
+                gridApi.getColumns().forEach((col) => {
+                    const colId = col.getColId();
+                    const isVisible = col.isVisible();
+
+                    const wrapper = document.createElement("div");
+
+                    const checkbox = document.createElement("input");
+                    checkbox.type = "checkbox";
+                    checkbox.checked = isVisible;
+
+                    checkbox.onchange = () => {
+                        gridApi.setColumnsVisible([colId], checkbox.checked);
+                        saveLayout(currentFileKey);
+                    };
+
+                    const label = document.createElement("label");
+                    label.style.marginLeft = "5px";
+                    label.textContent = colId;
+
+                    wrapper.appendChild(checkbox);
+                    wrapper.appendChild(label);
+                    panel.appendChild(wrapper);
+                });
+            }
+
+            function updateRowCount() {
+                if (!gridApi) return;
+
+                const visible = gridApi.getDisplayedRowCount();
+                const total = totalRowCount;
+
+                const text =
+                    visible === total
+                        ? `(${total.toLocaleString()} rows)`
+                        : `(${visible.toLocaleString()} of ${total.toLocaleString()})`;
+
+                document.getElementById("rowCount").textContent = text;
+            }
+
+            function deleteView() {
+                const selector = document.getElementById("viewSelector");
+                const name = selector.value;
+
+                if (!name) {
+                    alert("Select a view to delete");
+                    return;
+                }
+
+                if (!confirm(`Delete view "${name}"?`)) return;
+
+                localStorage.removeItem("view_" + name);
+
+                updateViewList();
+                selector.value = "";
+            }
+
+            function saveLayout(fileKey) {
+                if (!fileKey) return;
+
+                const columnState = gridApi.getColumnState();
+
+                const sortState = columnState
+                    .filter((col) => col.sort)
+                    .map((col) => ({
+                        colId: col.colId,
+                        sort: col.sort,
+                    }));
+
+                const filterState = gridApi.getFilterModel();
+
+                localStorage.setItem(
+                    fileKey + "_columnState",
+                    JSON.stringify(columnState),
+                );
+                localStorage.setItem(
+                    fileKey + "_sortState",
+                    JSON.stringify(sortState),
+                );
+                localStorage.setItem(
+                    fileKey + "_filterState",
+                    JSON.stringify(filterState),
+                );
+            }
+
+            function restoreLayout(fileKey) {
+                const columnState = JSON.parse(
+                    localStorage.getItem(fileKey + "_columnState"),
+                );
+                const sortState = JSON.parse(
+                    localStorage.getItem(fileKey + "_sortState"),
+                );
+                const filterState = JSON.parse(
+                    localStorage.getItem(fileKey + "_filterState"),
+                );
+
+                if (columnState) {
+                    gridApi.applyColumnState({
+                        state: columnState,
+                        applyOrder: true,
+                    });
+                }
+
+                if (sortState) {
+                    gridApi.applyColumnState({
+                        state: sortState.map((col) => ({
+                            colId: col.colId,
+                            sort: col.sort,
+                        })),
+                    });
+                }
+
+                if (filterState) {
+                    gridApi.setFilterModel(filterState);
+                }
+            }
+
+            function resetLayout() {
+                if (!confirm("Reset layout and clear filters?")) return;
+
+                if (currentFileKey) {
+                    localStorage.removeItem(currentFileKey + "_columnState");
+                    localStorage.removeItem(currentFileKey + "_sortState");
+                    localStorage.removeItem(currentFileKey + "_filterState");
+                }
+
+                gridApi.resetColumnState();
+                gridApi.setFilterModel(null);
+            }
+
+            // =====================
+            // 3. DATA LOADING
+            // =====================
+            function upload() {
+                const file = document.getElementById("fileInput").files[0];
+                if (!file) {
+                    alert("Please select a CSV file");
+                    return;
+                }
+                currentFileKey = "layout_" + file.name;
+
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    dynamicTyping: false,
+
+                    complete: function (results) {
+                        const data = results.data;
+
+                        if (!data || data.length === 0) {
+                            alert("CSV contains no usable data.");
+                            return;
+                        }
+
+                        const columns = Object.keys(data[0]).map((key) => ({
+                            field: key,
+                            sortable: true,
+                            filter: true,
+                            resizable: true,
+                            tooltipField: key,
+
+                            cellStyle: {
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                            },
+                        }));
+
+                        gridApi.setGridOption("columnDefs", columns);
+                        gridApi.setGridOption("rowData", data);
+                        gridApi.refreshClientSideRowModel("sort");
+                        totalRowCount = data.length;
+
+                        restoreLayout(currentFileKey);
+
+                        updateRowCount();
+                    },
+
+                    error: function (err) {
+                        console.error(err);
+                        alert("Error parsing CSV");
+                    },
+                });
+            }
+
+            function loadView() {
+                if (!gridApi) {
+                    alert("Grid not ready");
+                    return;
+                }
+
+                const name = document.getElementById("viewSelector").value;
+                if (!name) {
+                    alert("Select a view first");
+                    return;
+                }
+
+                const view = JSON.parse(localStorage.getItem("view_" + name));
+                if (!view) {
+                    alert("View not found");
+                    return;
+                }
+
+                try {
+                    gridApi.applyColumnState({
+                        state: view.columnState,
+                        applyOrder: true,
+                    });
+
+                    if (view.sortState) {
+                        gridApi.applyColumnState({
+                            state: view.sortState.map((col) => ({
+                                colId: col.colId,
+                                sort: col.sort,
+                            })),
+                        });
+                    }
+
+                    gridApi.setFilterModel(view.filterState);
+
+                    updateRowCount();
+                } catch (e) {
+                    console.error(e);
+                    alert("Error loading view");
+                }
+            }
+
+            // =====================
+            // 4. UI FUNCTIONS
+            // =====================
+            function onQuickSearch() {
+                const value = document.getElementById("quickSearch").value;
+                gridApi.setGridOption("quickFilterText", value);
+                updateRowCount();
+            }
+
+            function saveView() {
+                if (!gridApi) {
+                    alert("Grid not ready");
+                    return;
+                }
+
+                const name = document.getElementById("viewName").value.trim();
+                if (!name) {
+                    alert("Enter a view name");
+                    return;
+                }
+
+                try {
+                    const view = {
+                        columnState: gridApi.getColumnState(),
+                        sortState: gridApi
+                            .getColumnState()
+                            .map((col) => ({
+                                colId: col.colId,
+                                sort: col.sort,
+                            }))
+                            .filter((col) => col.sort),
+                        filterState: gridApi.getFilterModel(),
+                    };
+
+                    localStorage.setItem("view_" + name, JSON.stringify(view));
+
+                    updateViewList();
+                    alert("View saved");
+                } catch (e) {
+                    console.error(e);
+                    alert("Error saving view");
+                }
+            }
+
+            function exportCSV() {
+                gridApi.exportDataAsCsv();
+            }
+
+            function updateViewList() {
+                const selector = document.getElementById("viewSelector");
+                selector.innerHTML = "";
+
+                Object.keys(localStorage)
+                    .filter((key) => key.startsWith("view_"))
+                    .forEach((key) => {
+                        const name = key.replace("view_", "");
+                        const option = document.createElement("option");
+                        option.value = name;
+                        option.textContent = name;
+                        selector.appendChild(option);
+                    });
+            }
+
+            // Call directly — DOMContentLoaded has already fired by the time
+            // this inline script runs at the bottom of <body>
+            updateViewList();
+        </script>
+    </body>
+</html>
