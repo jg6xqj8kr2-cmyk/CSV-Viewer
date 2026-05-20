@@ -180,6 +180,8 @@
             }
 
             function saveLayout(fileKey) {
+                if (!fileKey) return;
+
                 const columnState = gridApi.getColumnState();
 
                 const sortState = columnState
@@ -236,12 +238,15 @@
                     gridApi.setFilterModel(filterState);
                 }
             }
+
             function resetLayout() {
                 if (!confirm("Reset layout and clear filters?")) return;
 
-                localStorage.removeItem("columnState");
-                localStorage.removeItem("sortState");
-                localStorage.removeItem("filterState");
+                if (currentFileKey) {
+                    localStorage.removeItem(currentFileKey + "_columnState");
+                    localStorage.removeItem(currentFileKey + "_sortState");
+                    localStorage.removeItem(currentFileKey + "_filterState");
+                }
 
                 gridApi.resetColumnState();
                 gridApi.setFilterModel(null);
@@ -252,11 +257,11 @@
             // =====================
             function upload() {
                 const file = document.getElementById("fileInput").files[0];
-                currentFileKey = "layout_" + file.name;
                 if (!file) {
                     alert("Please select a CSV file");
                     return;
                 }
+                currentFileKey = "layout_" + file.name;
 
                 Papa.parse(file, {
                     header: true,
@@ -308,8 +313,6 @@
                     return;
                 }
 
-                const columnApi = gridApi;
-
                 const name = document.getElementById("viewSelector").value;
                 if (!name) {
                     alert("Select a view first");
@@ -323,7 +326,7 @@
                 }
 
                 try {
-                    columnApi.applyColumnState({
+                    gridApi.applyColumnState({
                         state: view.columnState,
                         applyOrder: true,
                     });
@@ -339,7 +342,7 @@
 
                     gridApi.setFilterModel(view.filterState);
 
-                    updateRowCount(); // ✅ correct place
+                    updateRowCount();
                 } catch (e) {
                     console.error(e);
                     alert("Error loading view");
@@ -351,8 +354,8 @@
             // =====================
             function onQuickSearch() {
                 const value = document.getElementById("quickSearch").value;
-                gridApi.setQuickFilter(value);
-                updateRowCount(); // <-- important
+                gridApi.setGridOption("quickFilterText", value);
+                updateRowCount();
             }
 
             function saveView() {
@@ -360,8 +363,6 @@
                     alert("Grid not ready");
                     return;
                 }
-
-                const columnApi = gridApi;
 
                 const name = document.getElementById("viewName").value.trim();
                 if (!name) {
@@ -371,7 +372,7 @@
 
                 try {
                     const view = {
-                        columnState: columnApi.getColumnState(),
+                        columnState: gridApi.getColumnState(),
                         sortState: gridApi
                             .getColumnState()
                             .map((col) => ({
@@ -396,12 +397,6 @@
                 gridApi.exportDataAsCsv();
             }
 
-            document.addEventListener("DOMContentLoaded", function () {
-                if (typeof updateViewList === "function") {
-                    updateViewList();
-                }
-            });
-
             function updateViewList() {
                 const selector = document.getElementById("viewSelector");
                 selector.innerHTML = "";
@@ -416,6 +411,10 @@
                         selector.appendChild(option);
                     });
             }
+
+            // Call directly — DOMContentLoaded has already fired by the time
+            // this inline script runs at the bottom of <body>
+            updateViewList();
         </script>
     </body>
 </html>
