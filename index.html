@@ -23,6 +23,10 @@
             >
                 (0 rows)
             </span>
+            <span
+                id="currentFile"
+                style="font-size: 0.5em; margin-left: 10px; color: #999; font-style: italic"
+            ></span>
         </h2>
 
         <input type="file" id="fileInput" />
@@ -261,9 +265,25 @@
                     alert("Please select a CSV file");
                     return;
                 }
-                currentFileKey = "layout_" + file.name;
 
-                Papa.parse(file, {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const csvText = e.target.result;
+                    loadCSVData(file.name, csvText);
+                    try {
+                        localStorage.setItem("lastFileName", file.name);
+                        localStorage.setItem("lastFileData", csvText);
+                    } catch (err) {
+                        console.warn("Could not persist file to localStorage (file may be too large):", err);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            function loadCSVData(fileName, csvText) {
+                currentFileKey = "layout_" + fileName;
+
+                Papa.parse(csvText, {
                     header: true,
                     skipEmptyLines: true,
                     dynamicTyping: false,
@@ -296,8 +316,10 @@
                         totalRowCount = data.length;
 
                         restoreLayout(currentFileKey);
-
                         updateRowCount();
+
+                        document.getElementById("currentFile").textContent =
+                            fileName;
                     },
 
                     error: function (err) {
@@ -412,9 +434,17 @@
                     });
             }
 
-            // Call directly — DOMContentLoaded has already fired by the time
-            // this inline script runs at the bottom of <body>
+            // =====================
+            // 5. INIT
+            // =====================
             updateViewList();
+
+            // Restore last loaded file automatically
+            const lastFileName = localStorage.getItem("lastFileName");
+            const lastFileData = localStorage.getItem("lastFileData");
+            if (lastFileName && lastFileData) {
+                loadCSVData(lastFileName, lastFileData);
+            }
         </script>
     </body>
 </html>
